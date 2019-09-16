@@ -1,0 +1,109 @@
+---
+title: 'Final Project : Car Evaltuaion'
+author: "Ku, Bonseong"
+date: "`r Sys.Date()`"
+output:
+  prettydoc::html_pretty:
+    theme: architect
+    highlight: github
+---
+
+# 서론
+  인류의 응집된 과학기술을 가장 직접적으로 접할 수 있는 기계장치. 바로 `자동차` 이다. 태초의 자동차는 1769년 증기 자동차로서 고위장교들의 이동수단으로 사용되었지만, 산업이 발전하고 자동차가 보편화 되면서 그 종류 또한 많아졌다. 따라서 사람들이 대체로 선호하는 브랜드나 크기 또한 다르며, 이제 자동차는 그 선택의 가짓수가 매우 많아졌다. 이번 분석에서는 사람들이 보편적으로 선택한 자동차에 대해서 어떤 요소에 따라 평가가 어떻게 달라지는지 알아볼 것이며, 이것이 구조적인 모델이 되었을 때 자동차회사는 어떤 점을 집중적으로 고려해야 하는지 알 수 있을 것이다.
+
+
+# 패키지 로드
+```{r message=FALSE, warning=FALSE}
+library(e1071)
+library(ggplot2)
+library(dplyr)
+library(rpart)
+set.seed(190612)
+```
+
+# 데이터 로드 / 구조 파악
+- Class 는 Unacc, Acc, Good, Vgood 으로 총 4개로 나누어져 있으며 각각 문제 많음, 그럭저럭, 좋음, 매우좋음을 뜻한다.
+- Attibute 속성은 Buying, Maintenance, Doors, Persons, Luggage Boot, Safety 로 총 6개로 구성되어 있다.
+  1. Buying는 구매가격을 의미한다. vhigh, high, med, low 로 4개로 구별된다.
+  2. Maintenance는 유지비용을 말한다. 이 또한 vhigh, high, med, low 4개로 구별된다.
+  3. Doors는 차문의 개수를 뜻하며 숫자로 표현된다.
+  4. Persons은 차량 탑승인원을 말한다. 이 또한 숫자로 표현된다.
+  5. Luggage Boot는 짐칸의 크기를 말한다. 이는 small, med, big 총 3개로 구별된다.
+  6. Safety은 차량의 안전한 정도를 의미한다. 이는 low, med, high 총 3개로 구별된다.
+
+```{r}
+cardata<-read.csv('./car_data.csv',header=T)
+str(cardata)
+
+cardata_sub1<-cardata %>%
+  group_by(class) %>%
+  summarise(n=n()) %>%
+  arrange(desc(class))
+
+ggplot(data=cardata_sub1, aes(x=class,y=n))+geom_bar(stat='identity',fill='skyblue')
+```
+
+- class에 있어서 unacc(부적절함)이 제일 많음을 알 수 있다.
+
+# 데이터 쪼개기
+```{r}
+train_index <- sample(1:nrow(cardata), round(nrow(cardata)*0.7))
+cardataTrain <- cardata[train_index,]
+cardataTest <- cardata[-train_index,]
+```
+
+- 데이터를 Train데이터와 Test데이터로 7:3의 비율로 쪼갠다.
+- Train 데이터로 모형을 학습시키고 Test 데이터로 모형을 평가-적용한다.
+
+# 의사결정나무 (Decision Tree)
+```{r}
+tree.fit<-rpart(class~., data=cardataTrain)
+{plot(tree.fit, main='Decision Tree')
+  text(tree.fit)}
+
+dt_pred<-predict(tree.fit, cardataTest, type='class')
+dt_table<-table(actual=cardataTest$class, predict=dt_pred)
+dt_table
+sum(diag(dt_table))/sum(dt_table)
+```
+
+- `의사결정나무`에서 정확도는 90.9%로 굉장히 높았다. 이는 분류의 기준이 연속형 자료가 아닌 범주형 자료여서 그렇지 않을까 생각된다.
+- 하지만 다항분류에 있어서 의사결정나무는 가장 기본적인 모델이다. 따라서 이 모델의 성능이 완벽하다고는 할 수 없다.
+- 따라서 좀 더 구조적인 모델이 필요하다.
+
+# 나이브 베이즈 (Naive Bayes)
+```{r}
+nb<-naiveBayes(class~., data=cardataTrain)
+nb_pred<-predict(nb, cardataTest, type='class')
+
+nb_table<-table(actual=cardataTest$class, predict=nb_pred)
+nb_table
+sum(diag(nb_table))/sum(nb_table)
+```
+
+- `나이브 베이즈`에서는 정확도가 85%로 대체로 떨어졌다.
+- 하지만 `나이브 베이즈` 분류는 올바른 MAP 결정 규칙에 따른 분류를 할 수 있다. 이는 확률 추정치가 약간 혹은 현저하게 부정확하더라도 항상 마찬가지이다. 그렇기 때문에, 이러한 분류는 나이브 확률 모델의 심각한 결함을 충분히 무시할 만큼 강력하다고 할 수 있다.
+
+# 서포트 벡터 머신
+```{r}
+tobj2 <- tune.svm(class ~ ., data = cardataTrain, 
+                 cost = 10^(-3:3), gamma = 10^(-3:3))
+tobj2$best.parameters
+
+
+svm.model <- svm(class ~ ., data = cardataTrain, 
+                 cost = tobj2$best.parameters$cost, 
+                 gamma = tobj2$best.parameters$gamma)
+
+svm_pred <- predict(svm.model, cardataTest[,-7])
+
+svm_table<-table(svm_pred, cardataTest$class) # confusion matrix
+svm_table
+sum(diag(svm_table))/sum(svm_table)
+```
+- `SVM`을 사용할 경우 정확도가 무려 99.5%이다.
+- 이는 다차원의 Feature가 있을 때 최적의 초평면을 찾는 SVM 의 분류규칙이 있기 때문이다.
+- 위 모델의 경우 6차원 데이터를 잘 분류하는 초평면을 찾았다. 이 모델에 따라 앞으로의 Feature이 주어졌을 때 사람들의 만족도를 알 수 있는 척도가 될 것이다.
+
+# 결론
+  세 모델을 비교한 결과 `SVM`의 정확도가 가장 높았다. 이는 다차원 Feature 에서는 가장 구조적인 모델이 유리하다고 할 수 있기 때문이다. 하지만, 이는 1997년 데이터이기 때문에 새로 나오는 자동차에 대해서 평가를 하고 싶을 경우에는 최신 데이터가 필요하다고 생각한다. 또, 이보다 더 좋은 모델이 있을 수도 있으므로 다른 모델에 대한 평가도 필요하다.
